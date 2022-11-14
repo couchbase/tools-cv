@@ -16,11 +16,15 @@ import jenkins.model.CauseOfInterruption.UserInterruption
 
 SILENT = env.JOB_NAME.contains("silent")
 
+PARALLELISM = 16
+
 CB_SERVER_MANIFEST = "branch-master.xml"
 
 WINDOWS_NODE_LABEL = "msvc2015"
 LINUX_NODE_LABEL = "ubuntu-18.04 && large"
 MACOS_NODE_LABEL = "kv-macos"
+
+CMAKE_ARGS = "-DBUILD_ENTERPRISE=1"
 
 pipeline {
     agent { label getNodeLabel() }
@@ -28,6 +32,7 @@ pipeline {
     environment {
         SOURCE = "${WORKSPACE}/source"
         CURRENT_PROJECT = "${SOURCE}/${GERRIT_PROJECT}"
+        EXAMINADOR = "${WORKSPACE}/examinador"
 
         CB_SERVER_SOURCE = "${WORKSPACE}/server"
         CB_SERVER_SOURCE_PROJECT = "${CB_SERVER_SOURCE}/${GERRIT_PROJECT}"
@@ -36,9 +41,9 @@ pipeline {
         GOLANGCI_LINT_VERSION = "v1.49.0"
 
         GOROOT = "${WORKSPACE}/go"
-        GOBIN = "${GOROOT}/bin"
+        TEMP_GOBIN = "${GOROOT}/bin"
 
-        PATH="${PATH}:${GOBIN}:${WORKSPACE}/bin"
+        PATH="${PATH}:${TEMP_GOBIN}:${WORKSPACE}/bin"
     }
 
     stages {
@@ -85,6 +90,26 @@ pipeline {
                             error "Required environment variable '${var}' not set."
                         }
                     }
+
+                    // default CMAKE_ARGS to an empty string if unset
+                    env.CMAKE_ARGS = env.CMAKE_ARGS ?: ""
+
+                    if (getJobName() != "windows") {
+                        env.CMAKE_ARGS="-DCMAKE_BUILD_TYPE=DebugOptimized ${CMAKE_ARGS}"
+                    }
+
+                    // Constrain link parallelism to half of the compile
+                    // parallelism given that linking is typically much more RAM
+                    // hungry than compilation, and we have seen the build get
+                    // OOM-killed on machines which have many cores but lower
+                    // RAM (e.g. 16 cores, 16 GB RAM).
+                    if (env.PARALLELISM) {
+                       link_parallelism = ((env.PARALLELISM as Integer) / 2)
+                       env.CMAKE_ARGS="${CMAKE_ARGS} -DCB_PARALLEL_LINK_JOBS=${link_parallelism}"
+                    }
+
+                    env.CMAKE_GENERATOR = env.CMAKE_GENERATOR ? env.CMAKE_GENERATOR : "Ninja"
+
                 }
 
                 timeout(time: 5, unit: "MINUTES") {
@@ -92,15 +117,15 @@ pipeline {
                     sh "wget -q -O- ${GO_TARBALL_URL} | tar xz"
 
                     // get golangci-lint binary
-                    sh "curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh | sh -s -- -b ${GOBIN} ${GOLANGCI_LINT_VERSION}"
+                    sh "curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh | sh -s -- -b ${TEMP_GOBIN} ${GOLANGCI_LINT_VERSION}"
                     sh "golangci-lint --version"
 
                     // Unit test reporting
-                    sh "go install github.com/jstemmer/go-junit-report@latest"
+                    sh "GOBIN=${TEMP_GOBIN} go install github.com/jstemmer/go-junit-report@latest"
 
                     // Coverage reporting
-                    sh "go install github.com/axw/gocov/gocov@latest"
-                    sh "go install github.com/AlekSi/gocov-xml@latest"
+                    sh "GOBIN=${TEMP_GOBIN} go install github.com/axw/gocov/gocov@latest"
+                    sh "GOBIN=${TEMP_GOBIN} go install github.com/AlekSi/gocov-xml@latest"
 
                     // Create the source directory and any missing parent directories
                     sh "mkdir -p ${SOURCE}"
@@ -123,7 +148,7 @@ pipeline {
             steps {
                 timeout(time: 5, unit: "MINUTES") {
                     dir("${CURRENT_PROJECT}") {
-                        sh "golangci-lint run --timeout 5m"
+                        sh "GOBIN=${TEMP_GOBIN} golangci-lint run --timeout 5m"
                     }
                 }
             }
@@ -166,16 +191,16 @@ pipeline {
 
                 dir("${CURRENT_PROJECT}") {
                     // Clean the Go test cache
-                    sh "go clean -testcache"
+                    sh "GOBIN=${TEMP_GOBIN} go clean -testcache"
 
                     // Run the unit testing
-                    sh "2>&1 go test -v -timeout=15m -count=1 -coverprofile=coverage-backup.out ./... | tee ${WORKSPACE}/reports/test-backup.raw"
+                    sh "2>&1 GOBIN=${TEMP_GOBIN} go test -v -timeout=15m -count=1 -coverprofile=coverage-backup.out ./... | tee ${WORKSPACE}/reports/test-backup.raw"
 
                     // Convert the test output into valid 'junit' xml
                     sh "cat ${WORKSPACE}/reports/test-backup.raw | go-junit-report > ${WORKSPACE}/reports/test-backup.xml"
 
                     // Convert the coverage report into valid 'cobertura' xml
-                    sh "gocov convert coverage-backup.out | gocov-xml > ${WORKSPACE}/reports/coverage-backup.xml"
+                    sh "GOBIN=${TEMP_GOBIN} gocov convert coverage-backup.out | gocov-xml > ${WORKSPACE}/reports/coverage-backup.xml"
                 }
             }
         }
@@ -195,7 +220,7 @@ pipeline {
                 timeout(time: 15, unit: "MINUTES") {
                     dir("${CB_SERVER_SOURCE}") {
                         sh "repo init -u https://github.com/couchbase/manifest -m ${CB_SERVER_MANIFEST} -g all"
-                        sh "repo sync -j8"
+                        sh "repo sync -j${PARALLELISM}"
                     }
 
                     // Fetch the commit we are testing
@@ -212,6 +237,26 @@ pipeline {
             }
         }
 
+        stage("Setup Build Configuration") {
+            when {
+                expression {
+                    return env.GERRIT_PROJECT == 'backup';
+                }
+            }
+            steps {
+                timeout(time: 5, unit: "MINUTES") {
+                    dir("${CB_SERVER_SOURCE}") {
+                        // If we've checked out a specific version of the tlm project
+                        // then we'll need to bring our new CMakeLists.txt in manually
+                        sh 'cp -f tlm/CMakeLists.txt CMakeLists.txt'
+                        sh 'cp -f tlm/third-party-CMakeLists.txt third_party/CMakeLists.txt'
+                        sh 'mkdir -p build'
+                        sh 'cd build && cmake -G ${CMAKE_GENERATOR} ${CMAKE_ARGS} ..'
+                    }
+                }
+            }
+        }
+
         stage("Build Couchbase Server") {
             when {
                 expression {
@@ -221,7 +266,8 @@ pipeline {
             steps {
                 timeout(time: 60, unit: "MINUTES") {
                     dir("${CB_SERVER_SOURCE}") {
-                        sh "make -j8"
+                        sh 'cmake --build build --parallel ${PARALLELISM} --target everything --target install'
+                        sh 'ccache -s'
                     }
                 }
             }
@@ -274,6 +320,22 @@ pipeline {
 
             // Post the test coverage
             cobertura autoUpdateStability: false, autoUpdateHealth: false, onlyStable: false, coberturaReportFile: "reports/coverage-*.xml", conditionalCoverageTargets: "70, 10, 30", failNoReports: false, failUnhealthy: true, failUnstable: true, lineCoverageTargets: "70, 10, 30", methodCoverageTargets: "70, 10, 30", maxNumberOfBuilds: 0, sourceEncoding: "ASCII", zoomCoverageChart: false
+
+            script {
+                step(
+                        [
+                        $class              : 'RobotPublisher',
+                        outputPath          : 'reports',
+                        outputFileName      : 'output.xml',
+                        reportFileName      : 'report.html',
+                        logFileName         : 'log.html',
+                        otherFiles          : '*.zip',
+                        disableArchiveOutput: false,
+                        passThreshold       : 100,
+                        unstableThreshold   : 95,
+                        ]
+                    )
+            }
         }
 
         cleanup {
