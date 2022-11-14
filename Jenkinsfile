@@ -51,7 +51,7 @@ pipeline {
                                 [
                                     compareType: "PLAIN",
                                     disableStrictForbiddenFileVerification: false, 
-                                    pattern: env.GERRIT_PROJECT,
+                                    pattern: getProjectName(),
                                     branches: [[ 
                                         compareType: "PLAIN", 
                                         pattern: env.BRANCH_NAME 
@@ -312,7 +312,7 @@ def submitGerritVerifyStatus(value) {
 
 def getJobType() {
     // e.g., tools.linux.some_testing_change/master
-    // we want ASan-UBSan
+    // we want linux
     return getJobName().tokenize(".")[1]
 }
 
