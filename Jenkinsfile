@@ -13,8 +13,7 @@
 import hudson.model.Result
 import hudson.model.Run
 import jenkins.model.CauseOfInterruption.UserInterruption
-
-evaluate(new File("./cvutils.groovy"))
+import cvutils.groovy
 
 SILENT = env.JOB_NAME.contains("silent")
 
