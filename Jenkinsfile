@@ -310,6 +310,24 @@ def submitGerritVerifyStatus(value) {
     ${GERRIT_PATCHSET_REVISION}"""
 }
 
+def getJobType() {
+    // e.g., tools.linux.some_testing_change/master
+    // we want ASan-UBSan
+    return getJobName().tokenize(".")[1]
+}
+
+def getJobName() {
+    // e.g., tools.linux.some_testing_change/master
+    // we want tools.linux.some_testing_change
+    return env.JOB_NAME.tokenize("/")[0]
+}
+
+def getProjectName() {
+    // e.g., tools.linux.some_testing_change/master
+    // we want tools
+    return getJobName().tokenize(".")[0]
+}
+
 def getNodeLabel() {
     def osLabel = ""
     switch(getJobType()) {
