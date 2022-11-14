@@ -186,7 +186,7 @@ pipeline {
         }
     
 
-        stage("Get CB") {
+        stage("Get Couchbase Server Source") {
             steps {
                 timeout(time: 15, unit: "MINUTES") {
                     dir("${SOURCE}") {
