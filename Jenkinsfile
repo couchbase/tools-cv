@@ -16,6 +16,8 @@ import jenkins.model.CauseOfInterruption.UserInterruption
 
 SILENT = env.JOB_NAME.contains("silent")
 
+CB_SERVER_MANIFEST = "branch-master.xml"
+
 WINDOWS_NODE_LABEL = "msvc2015"
 LINUX_NODE_LABEL = "ubuntu-18.04 && large"
 MACOS_NODE_LABEL = "kv-macos"
@@ -25,8 +27,10 @@ pipeline {
 
     environment {
         SOURCE = "${WORKSPACE}/source"
-
         CURRENT_PROJECT = "${SOURCE}/${GERRIT_PROJECT}"
+
+        CB_SERVER_SOURCE = "${WORKSPACE}/server"
+        CB_SERVER_SOURCE_PROJECT = "${CB_SERVER_SOURCE}/${GERRIT_PROJECT}"
 
         GO_TARBALL_URL = "https://golang.org/dl/go1.19.linux-amd64.tar.gz"
         GOLANGCI_LINT_VERSION = "v1.49.0"
@@ -189,13 +193,13 @@ pipeline {
         stage("Get Couchbase Server Source") {
             steps {
                 timeout(time: 15, unit: "MINUTES") {
-                    dir("${SOURCE}") {
-                        sh "repo init -u https://github.com/couchbase/manifest -m branch-master.xml -g all"
+                    dir("${CB_SERVER_SOURCE}") {
+                        sh "repo init -u https://github.com/couchbase/manifest -m ${CB_SERVER_MANIFEST} -g all"
                         sh "repo sync -j8"
                     }
 
                     // Fetch the commit we are testing
-                    dir("${CURRENT_PROJECT}") {
+                    dir("${CB_SERVER_SOURCE_PROJECT}") {
                         // if no gerrit spec given run on the current head
                         script {
                             if (env.GERRIT_REFSPEC) {
@@ -216,7 +220,7 @@ pipeline {
             }
             steps {
                 timeout(time: 60, unit: "MINUTES") {
-                    dir("${SOURCE}") {
+                    dir("${CB_SERVER_SOURCE}") {
                         sh "make -j8"
                     }
                 }
@@ -255,7 +259,7 @@ pipeline {
                 dir("${EXAMINADOR}") {
                     sh '''#!/bin/bash
                           source robot-env/bin/activate
-                          robot-env/bin/robot --variable SOURCE:${SOURCE} --variable WORKSPACE:${WORKSPACE} --variable DELETE_LOGS:True --outputdir ${WORKSPACE}/reports --exclude in_progress --exclude UI --exclude wait_for_bug_fix --consolewidth 120 -L DEBUG cbm_tests cbm_multi_service_tests
+                          robot-env/bin/robot --variable SOURCE:${CB_SERVER_SOURCE} --variable WORKSPACE:${WORKSPACE} --variable DELETE_LOGS:True --outputdir ${WORKSPACE}/reports --exclude in_progress --exclude UI --exclude wait_for_bug_fix --consolewidth 120 -L DEBUG cbm_tests cbm_multi_service_tests
                     '''
                 }
             }
