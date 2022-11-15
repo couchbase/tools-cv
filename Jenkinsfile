@@ -20,7 +20,7 @@ PARALLELISM = 16
 
 CB_SERVER_MANIFEST = "branch-master.xml"
 
-WINDOWS_NODE_LABEL = "msvc2015"
+WINDOWS_NODE_LABEL = "msvc2017"
 LINUX_NODE_LABEL = "ubuntu-18.04 && large"
 MACOS_NODE_LABEL = "kv-macos"
 
