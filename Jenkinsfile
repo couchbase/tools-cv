@@ -168,6 +168,11 @@ pipeline {
         }
 
         stage("Build") {
+            when {
+                expression {
+                    return env.GERRIT_PROJECT == 'backup';
+                }
+            }
             steps {
                 timeout(time: 10, unit: "MINUTES") {
                     dir("${CURRENT_PROJECT}") {
@@ -194,13 +199,13 @@ pipeline {
                     sh "GOBIN=${TEMP_GOBIN} go clean -testcache"
 
                     // Run the unit testing
-                    sh "2>&1 GOBIN=${TEMP_GOBIN} go test -v -timeout=15m -count=1 -coverprofile=coverage-backup.out ./... | tee ${WORKSPACE}/reports/test-backup.raw"
+                    sh "2>&1 GOBIN=${TEMP_GOBIN} go test -v -timeout=15m -count=1 -coverprofile=coverage.out ./... | tee ${WORKSPACE}/reports/test.raw"
 
                     // Convert the test output into valid 'junit' xml
-                    sh "cat ${WORKSPACE}/reports/test-backup.raw | go-junit-report > ${WORKSPACE}/reports/test-backup.xml"
+                    sh "cat ${WORKSPACE}/reports/test.raw | go-junit-report > ${WORKSPACE}/reports/test.xml"
 
                     // Convert the coverage report into valid 'cobertura' xml
-                    sh "GOBIN=${TEMP_GOBIN} gocov convert coverage-backup.out | gocov-xml > ${WORKSPACE}/reports/coverage-backup.xml"
+                    sh "GOBIN=${TEMP_GOBIN} gocov convert coverage.out | gocov-xml > ${WORKSPACE}/reports/coverage.xml"
                 }
             }
         }
@@ -216,6 +221,11 @@ pipeline {
     
 
         stage("Get Couchbase Server Source") {
+            when {
+                expression {
+                    return env.GERRIT_PROJECT == 'backup';
+                }
+            }
             steps {
                 timeout(time: 15, unit: "MINUTES") {
                     dir("${CB_SERVER_SOURCE}") {
@@ -316,25 +326,27 @@ pipeline {
     post {
         always {
             // Post the test results
-            junit allowEmptyResults: true, testResults: "reports/test-*.xml"
+            junit allowEmptyResults: true, testResults: "reports/test.xml"
 
             // Post the test coverage
-            cobertura autoUpdateStability: false, autoUpdateHealth: false, onlyStable: false, coberturaReportFile: "reports/coverage-*.xml", conditionalCoverageTargets: "70, 10, 30", failNoReports: false, failUnhealthy: true, failUnstable: true, lineCoverageTargets: "70, 10, 30", methodCoverageTargets: "70, 10, 30", maxNumberOfBuilds: 0, sourceEncoding: "ASCII", zoomCoverageChart: false
+            cobertura autoUpdateStability: false, autoUpdateHealth: false, onlyStable: false, coberturaReportFile: "reports/coverage.xml", conditionalCoverageTargets: "70, 10, 30", failNoReports: false, failUnhealthy: true, failUnstable: true, lineCoverageTargets: "70, 10, 30", methodCoverageTargets: "70, 10, 30", maxNumberOfBuilds: 0, sourceEncoding: "ASCII", zoomCoverageChart: false
 
             script {
-                step(
-                        [
-                        $class              : 'RobotPublisher',
-                        outputPath          : 'reports',
-                        outputFileName      : 'output.xml',
-                        reportFileName      : 'report.html',
-                        logFileName         : 'log.html',
-                        otherFiles          : '*.zip',
-                        disableArchiveOutput: false,
-                        passThreshold       : 100,
-                        unstableThreshold   : 95,
-                        ]
-                    )
+                if (env.GERRIT_PROJECT == 'backup') {
+                    step(
+                            [
+                            $class              : 'RobotPublisher',
+                            outputPath          : 'reports',
+                            outputFileName      : 'output.xml',
+                            reportFileName      : 'report.html',
+                            logFileName         : 'log.html',
+                            otherFiles          : '*.zip',
+                            disableArchiveOutput: false,
+                            passThreshold       : 100,
+                            unstableThreshold   : 95,
+                            ]
+                        )
+                }
             }
         }
 
@@ -367,7 +379,7 @@ def submitGerritVerifyStatus(value) {
     // Directly report the verify status to Gerrit
     // The jenkins plugin which reports to the verify-status sidebar does not seem to be up to date
     // TODO: Investigate the HTTP API for greater portability (e.g., windows!)
-    def url = "http://cv.jenkins.couchbase.com/job/backup-cv-multi-branch-pipeline/job/${env.BRANCH_NAME}/${BUILD_NUMBER}/"
+    def url = "http://cv.jenkins.couchbase.com/job/${getJobName()}/job/${env.BRANCH_NAME}/${BUILD_NUMBER}/"
 
     sh """ssh -p ${env.GERRIT_PORT} buildbot@${env.GERRIT_HOST} \
     -o "UserKnownHostsFile=/dev/null" -o "StrictHostKeyChecking=no" \
