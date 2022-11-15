@@ -26,6 +26,8 @@ MACOS_NODE_LABEL = "kv-macos"
 
 CMAKE_ARGS = "-DBUILD_ENTERPRISE=1"
 
+RUN_EXAMINADOR = false
+
 pipeline {
     agent { label getNodeLabel() }
 
@@ -223,7 +225,7 @@ pipeline {
         stage("Get Couchbase Server Source") {
             when {
                 expression {
-                    return env.GERRIT_PROJECT == 'backup';
+                    return env.RUN_EXAMINADOR && env.GERRIT_PROJECT == 'backup';
                 }
             }
             steps {
@@ -250,7 +252,7 @@ pipeline {
         stage("Setup Build Configuration") {
             when {
                 expression {
-                    return env.GERRIT_PROJECT == 'backup';
+                    return env.RUN_EXAMINADOR && env.GERRIT_PROJECT == 'backup';
                 }
             }
             steps {
@@ -270,7 +272,7 @@ pipeline {
         stage("Build Couchbase Server") {
             when {
                 expression {
-                    return env.GERRIT_PROJECT == 'backup';
+                    return env.RUN_EXAMINADOR && env.GERRIT_PROJECT == 'backup';
                 }
             }
             steps {
@@ -286,7 +288,7 @@ pipeline {
         stage("Setup Examinador") {
             when {
                 expression {
-                    return env.GERRIT_PROJECT == 'backup';
+                    return env.RUN_EXAMINADOR && env.GERRIT_PROJECT == 'backup';
                 }
             }
             steps {
@@ -308,7 +310,7 @@ pipeline {
         stage("Examinador Test") {
             when {
                 expression {
-                    return env.GERRIT_PROJECT == 'backup';
+                    return env.RUN_EXAMINADOR && env.GERRIT_PROJECT == 'backup';
                 }
             }
             steps{
@@ -332,7 +334,7 @@ pipeline {
             cobertura autoUpdateStability: false, autoUpdateHealth: false, onlyStable: false, coberturaReportFile: "reports/coverage.xml", conditionalCoverageTargets: "70, 10, 30", failNoReports: false, failUnhealthy: true, failUnstable: true, lineCoverageTargets: "70, 10, 30", methodCoverageTargets: "70, 10, 30", maxNumberOfBuilds: 0, sourceEncoding: "ASCII", zoomCoverageChart: false
 
             script {
-                if (env.GERRIT_PROJECT == 'backup') {
+                if (env.RUN_EXAMINADOR && env.GERRIT_PROJECT == 'backup') {
                     step(
                             [
                             $class              : 'RobotPublisher',
