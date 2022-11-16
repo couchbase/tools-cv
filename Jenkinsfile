@@ -117,7 +117,7 @@ pipeline {
 
                 timeout(time: 5, unit: "MINUTES") {
                     // Install Golang locally
-                    sh "wget -q -O- ${getGoDowloadURL()} | tar xz"
+                    sh "curl -sSL ${getGoDowloadURL()} | tar xz"
 
                     // get golangci-lint binary
                     sh "curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh | sh -s -- -b ${TEMP_GOBIN} ${GOLANGCI_LINT_VERSION}"
