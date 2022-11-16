@@ -53,12 +53,18 @@ pipeline {
         stage("Setup") {
             steps {
                 script {
+                    sh 'printenv'
+                    silentJob = false
+                    if (getJobType() == "macos") {
+                        silentJob = true
+                    }
+                    echo "JobName:${getJobName()} JobType:${getJobType()} silentJob:${silentJob}"
                     // Configure Gerrit Trigger
                     properties([pipelineTriggers([
                         gerrit(
                             serverName: "review.couchbase.org",
-                            silentMode: false,
-                            silentStartMode: false,
+                            silentMode: silentJob,
+                            silentStartMode: silentJob,
                             gerritProjects: [
                                 [
                                     compareType: "PLAIN",
@@ -135,7 +141,8 @@ pipeline {
 
                     // Perform a shallow clone of 'backup', the branch shouldn't matter here since we'll be switching to
                     // the 'FETCH_HEAD' branch.
-                    sh "git clone --depth=1 git@github.com:couchbase/${GERRIT_PROJECT}.git ${CURRENT_PROJECT}"
+                    sh "git clone --depth=1 ssh://buildbot@review.couchbase.org:29418/${GERRIT_PROJECT}.git ${CURRENT_PROJECT}"
+
 
                     // Fetch the commit we are testing
                     dir("${CURRENT_PROJECT}") {
@@ -152,6 +159,20 @@ pipeline {
                 timeout(time: 5, unit: "MINUTES") {
                     dir("${CURRENT_PROJECT}") {
                         sh "GOBIN=${TEMP_GOBIN} golangci-lint run --timeout 5m"
+                    }
+                }
+                script {
+                    if (env.GERRIT_PROJECT == 'cbmultimanager') {
+                        timeout(time: 5, unit: "MINUTES") {
+                            dir("${CURRENT_PROJECT}") {
+                                sh "tools/licence-lint.sh"
+                            }
+                        }
+                        timeout(time: 5, unit: "MINUTES") {
+                            dir("${CURRENT_PROJECT}") {
+                                sh "GOBIN=${TEMP_GOBIN} go run tools/validate-checker-docs.go"
+                            }
+                        } 
                     }
                 }
             }
@@ -201,8 +222,14 @@ pipeline {
                     // Clean the Go test cache
                     sh "GOBIN=${TEMP_GOBIN} go clean -testcache"
 
-                    // Run the unit testing
-                    sh "2>&1 GOBIN=${TEMP_GOBIN} go test -v -timeout=15m -count=1 -coverprofile=coverage.out ./... | tee ${WORKSPACE}/reports/test.raw"
+                    script {
+                        extraArgs = ""
+                        if (env.GERRIT_PROJECT == "cbmultimanager") {
+                            extraArgs = "-tags noui"
+                        }
+                        // Run the unit testing
+                        sh "2>&1 GOBIN=${TEMP_GOBIN} go test -v -timeout=15m -count=1 ${extraArgs} -coverprofile=coverage.out ./... | tee ${WORKSPACE}/reports/test.raw"
+                    }
 
                     // Convert the test output into valid 'junit' xml
                     sh "cat ${WORKSPACE}/reports/test.raw | go-junit-report > ${WORKSPACE}/reports/test.xml"
@@ -216,8 +243,14 @@ pipeline {
         stage("Benchmark") {
             steps {
                 dir("${CURRENT_PROJECT}") {
-                    // Run the benchmarks without running any tests by setting '-run='^$'
-                    sh "go test -timeout=15m -count=1 -run='^\044' -bench=Benchmark -benchmem ./..."
+                    script {
+                        extraArgs = ""
+                        if (env.GERRIT_PROJECT == "cbmultimanager") {
+                            extraArgs = "-tags noui"
+                        }
+                        // Run the benchmarks without running any tests by setting '-run='^$'
+                        sh "go test -timeout=15m -count=1 -run='^\044' ${extraArgs} -bench=Benchmark -benchmem ./..."
+                    }
                 }
             }
         }
