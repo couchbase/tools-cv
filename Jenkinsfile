@@ -18,6 +18,7 @@ SILENT = env.JOB_NAME.contains("silent")
 
 PARALLELISM = 16
 
+GO_VERSION = "1.19"
 CB_SERVER_MANIFEST = "branch-master.xml"
 
 WINDOWS_NODE_LABEL = "msvc2017"
@@ -116,7 +117,7 @@ pipeline {
 
                 timeout(time: 5, unit: "MINUTES") {
                     // Install Golang locally
-                    sh "wget -q -O- ${GO_TARBALL_URL} | tar xz"
+                    sh "wget -q -O- ${getGoDowloadURL()} | tar xz"
 
                     // get golangci-lint binary
                     sh "curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh | sh -s -- -b ${TEMP_GOBIN} ${GOLANGCI_LINT_VERSION}"
@@ -425,4 +426,24 @@ def getNodeLabel() {
             break;
     }
     return "${osLabel} && ${env.BRANCH_NAME}"
+}
+
+def getGoDowloadURL() {
+    def url = "https://golang.org/dl/go${GO_VERSION}"
+    def goPlatform = ""
+    switch(getJobType()) {
+        case "windows":
+            osLabel = "windows-amd64.zip"
+            break;
+        case "macos":
+            goPlatform = "darwin-amd64.tar.gz"
+            break;
+        case ~/aarch64-linux.*/:
+            goPlatform = "linux-arm64.tar.gz"
+            break;
+        default:
+            goPlatform = "linux-amd64.tar.gz"
+            break;
+    }
+    return "${url}.${goPlatform}"
 }
