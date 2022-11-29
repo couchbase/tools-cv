@@ -19,7 +19,7 @@ pipeline {
 
     environment {
         PARALLELISM = 16
-        CB_SERVER_MANIFEST = "couchbase-server/neo.xml"
+        CB_SERVER_MANIFEST = "branch-master.xml"
         SOURCE = "${WORKSPACE}/source"
         EXAMINADOR = "${WORKSPACE}/examinador"
     }
