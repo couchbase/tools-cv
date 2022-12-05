@@ -33,12 +33,10 @@ pipeline {
     agent { label getNodeLabel() }
 
     environment {
-        SOURCE = "${WORKSPACE}/source"
-        CURRENT_PROJECT = "${SOURCE}/${GERRIT_PROJECT}"
-        EXAMINADOR = "${WORKSPACE}/examinador"
-
         CB_SERVER_SOURCE = "${WORKSPACE}/server"
         CB_SERVER_SOURCE_PROJECT = "${CB_SERVER_SOURCE}/${GERRIT_PROJECT}"
+
+        EXAMINADOR = "${WORKSPACE}/examinador"
 
         GO_TARBALL_URL = "https://golang.org/dl/go1.19.linux-amd64.tar.gz"
         GOLANGCI_LINT_VERSION = "v1.49.0"
@@ -120,36 +118,72 @@ pipeline {
                     env.CMAKE_GENERATOR = env.CMAKE_GENERATOR ? env.CMAKE_GENERATOR : "Ninja"
 
                 }
+            }
+        }
 
-                timeout(time: 5, unit: "MINUTES") {
-                    // Install Golang locally
-                    sh "curl -sSL ${getGoDowloadURL()} | tar xz"
+        stage("Install Go") {
+            timeout(time: 5, unit: "MINUTES") {
+                // Install Golang locally
+                sh "curl -sSL ${getGoDowloadURL()} | tar xz"
+            }
+        }
 
-                    // get golangci-lint binary
-                    sh "curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh | sh -s -- -b ${TEMP_GOBIN} ${GOLANGCI_LINT_VERSION}"
-                    sh "golangci-lint --version"
+        stage("Install CV Dependencies") {
+            timeout(time: 5, unit: "MINUTES") {
+                // get golangci-lint binary
+                sh "curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh | sh -s -- -b ${TEMP_GOBIN} ${GOLANGCI_LINT_VERSION}"
+                sh "golangci-lint --version"
 
-                    // Unit test reporting
-                    sh "GOBIN=${TEMP_GOBIN} go install github.com/jstemmer/go-junit-report@latest"
+                // Unit test reporting
+                sh "GOBIN=${TEMP_GOBIN} go install github.com/jstemmer/go-junit-report@latest"
 
-                    // Coverage reporting
-                    sh "GOBIN=${TEMP_GOBIN} go install github.com/axw/gocov/gocov@latest"
-                    sh "GOBIN=${TEMP_GOBIN} go install github.com/AlekSi/gocov-xml@latest"
+                // Coverage reporting
+                sh "GOBIN=${TEMP_GOBIN} go install github.com/axw/gocov/gocov@latest"
+                sh "GOBIN=${TEMP_GOBIN} go install github.com/AlekSi/gocov-xml@latest"
+            }
+        }
 
-                    // Create the source directory and any missing parent directories
-                    sh "mkdir -p ${SOURCE}"
-
-                    // Perform a shallow clone of 'backup', the branch shouldn't matter here since we'll be switching to
-                    // the 'FETCH_HEAD' branch.
-                    sh "git clone --depth=1 ssh://buildbot@review.couchbase.org:29418/${GERRIT_PROJECT}.git ${CURRENT_PROJECT}"
-
-
-                    // Fetch the commit we are testing
-                    dir("${CURRENT_PROJECT}") {
-                        sh "git fetch ssh://buildbot@review.couchbase.org:29418/${GERRIT_PROJECT} ${GERRIT_REFSPEC}"
-                        sh "git checkout FETCH_HEAD"
-                    }
+        stage("Clone") {
+            when {
+                expression {
+                    return env.GERRIT_PROJECT == 'tools-common';
                 }
+            }
+
+            timeout(time: 5, unit: "MINUTES") {
+                // Create the source directory and any missing parent directories
+                sh "mkdir -p ${CB_SERVER_SOURCE}"
+
+                // Perform a shallow clone of 'tools-common', the branch shouldn't matter here since we'll be
+                // switching to the 'FETCH_HEAD' branch.
+                sh "git clone --depth=1 ssh://buildbot@review.couchbase.org:29418/${GERRIT_PROJECT}.git ${CB_SERVER_SOURCE_PROJECT}"
+            }
+        }
+
+        stage("Clone") {
+            when {
+                expression {
+                    return env.GERRIT_PROJECT != 'tools-common';
+                }
+            }
+
+            timeout(time: 5, unit: "MINUTES") {
+                // Create the source directory and any missing parent directories
+                sh "mkdir -p ${CB_SERVER_SOURCE}"
+
+                // Initialize and sync 'backup' group using 'repo'
+                dir("${CB_SERVER_SOURCE}") {
+                    sh "repo init -u https://github.com/couchbase/manifest -m ${CB_SERVER_MANIFEST} -g backup"
+                    sh "repo sync --jobs=8"
+                }
+            }
+        }
+
+        stage("Checkout") {
+            // Fetch the commit we are testing
+            dir("${CB_SERVER_SOURCE_PROJECT}") {
+                sh "git fetch ssh://buildbot@review.couchbase.org:29418/${GERRIT_PROJECT} ${GERRIT_REFSPEC}"
+                sh "git checkout FETCH_HEAD"
             }
         }
 
@@ -157,19 +191,19 @@ pipeline {
         stage("Lint") {
             steps {
                 timeout(time: 5, unit: "MINUTES") {
-                    dir("${CURRENT_PROJECT}") {
+                    dir("${CB_SERVER_SOURCE_PROJECT}") {
                         sh "GOBIN=${TEMP_GOBIN} golangci-lint run --timeout 5m"
                     }
                 }
                 script {
                     if (env.GERRIT_PROJECT == 'cbmultimanager') {
                         timeout(time: 5, unit: "MINUTES") {
-                            dir("${CURRENT_PROJECT}") {
+                            dir("${CB_SERVER_SOURCE_PROJECT}") {
                                 sh "tools/licence-lint.sh"
                             }
                         }
                         timeout(time: 5, unit: "MINUTES") {
-                            dir("${CURRENT_PROJECT}") {
+                            dir("${CB_SERVER_SOURCE_PROJECT}") {
                                 sh "GOBIN=${TEMP_GOBIN} go run tools/validate-checker-docs.go"
                             }
                         } 
@@ -185,7 +219,7 @@ pipeline {
                 }
             }
             steps {
-                dir("${CURRENT_PROJECT}") {
+                dir("${CB_SERVER_SOURCE_PROJECT}") {
                     sh "./jenkins/adoc-lint.sh"
                 }
             }
@@ -199,7 +233,7 @@ pipeline {
             }
             steps {
                 timeout(time: 10, unit: "MINUTES") {
-                    dir("${CURRENT_PROJECT}") {
+                    dir("${CB_SERVER_SOURCE_PROJECT}") {
                         // Build all the available tools, note that we skip 'jsonctx' which does not contain a main.
                         sh '''#!/bin/bash
                               for dir in $(ls ./cmd); do
@@ -218,7 +252,7 @@ pipeline {
                 // Create somewhere to store our coverage/test reports
                 sh "mkdir -p reports"
 
-                dir("${CURRENT_PROJECT}") {
+                dir("${CB_SERVER_SOURCE_PROJECT}") {
                     // Clean the Go test cache
                     sh "GOBIN=${TEMP_GOBIN} go clean -testcache"
 
@@ -242,7 +276,7 @@ pipeline {
 
         stage("Benchmark") {
             steps {
-                dir("${CURRENT_PROJECT}") {
+                dir("${CB_SERVER_SOURCE_PROJECT}") {
                     script {
                         extraArgs = ""
                         if (env.GERRIT_PROJECT == "cbmultimanager") {
