@@ -148,7 +148,7 @@ pipeline {
             }
         }
 
-        stage("Clone") {
+        stage("Tools Common Clone") {
             when {
                 expression {
                     // Only run this step for 'tools-common', it has a slightly lighter weight build process.
