@@ -123,24 +123,28 @@ pipeline {
         }
 
         stage("Install Go") {
-            timeout(time: 5, unit: "MINUTES") {
-                // Install Golang locally
-                sh "curl -sSL ${getGoDowloadURL()} | tar xz"
+            steps {
+                timeout(time: 5, unit: "MINUTES") {
+                    // Install Golang locally
+                    sh "curl -sSL ${getGoDowloadURL()} | tar xz"
+                }
             }
         }
 
         stage("Install CV Dependencies") {
-            timeout(time: 5, unit: "MINUTES") {
-                // get golangci-lint binary
-                sh "curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh | sh -s -- -b ${TEMP_GOBIN} ${GOLANGCI_LINT_VERSION}"
-                sh "golangci-lint --version"
+            steps {
+                timeout(time: 5, unit: "MINUTES") {
+                    // get golangci-lint binary
+                    sh "curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh | sh -s -- -b ${TEMP_GOBIN} ${GOLANGCI_LINT_VERSION}"
+                    sh "golangci-lint --version"
 
-                // Unit test reporting
-                sh "GOBIN=${TEMP_GOBIN} go install github.com/jstemmer/go-junit-report@latest"
+                    // Unit test reporting
+                    sh "GOBIN=${TEMP_GOBIN} go install github.com/jstemmer/go-junit-report@latest"
 
-                // Coverage reporting
-                sh "GOBIN=${TEMP_GOBIN} go install github.com/axw/gocov/gocov@latest"
-                sh "GOBIN=${TEMP_GOBIN} go install github.com/AlekSi/gocov-xml@latest"
+                    // Coverage reporting
+                    sh "GOBIN=${TEMP_GOBIN} go install github.com/axw/gocov/gocov@latest"
+                    sh "GOBIN=${TEMP_GOBIN} go install github.com/AlekSi/gocov-xml@latest"
+                }
             }
         }
 
@@ -151,14 +155,15 @@ pipeline {
                     return env.GERRIT_PROJECT == 'tools-common';
                 }
             }
+            steps {
+                timeout(time: 5, unit: "MINUTES") {
+                    // Create the source directory and any missing parent directories
+                    sh "mkdir -p ${CB_SERVER_SOURCE}"
 
-            timeout(time: 5, unit: "MINUTES") {
-                // Create the source directory and any missing parent directories
-                sh "mkdir -p ${CB_SERVER_SOURCE}"
-
-                // Perform a shallow clone of 'tools-common', the branch shouldn't matter here since we'll be
-                // switching to the 'FETCH_HEAD' branch.
-                sh "git clone --depth=1 ssh://buildbot@review.couchbase.org:29418/${GERRIT_PROJECT}.git ${CB_SERVER_SOURCE_PROJECT}"
+                    // Perform a shallow clone of 'tools-common', the branch shouldn't matter here since we'll be
+                    // switching to the 'FETCH_HEAD' branch.
+                    sh "git clone --depth=1 ssh://buildbot@review.couchbase.org:29418/${GERRIT_PROJECT}.git ${CB_SERVER_SOURCE_PROJECT}"
+                }
             }
         }
 
@@ -171,23 +176,27 @@ pipeline {
                 }
             }
 
-            timeout(time: 5, unit: "MINUTES") {
-                // Create the source directory and any missing parent directories
-                sh "mkdir -p ${CB_SERVER_SOURCE}"
+            steps {
+                timeout(time: 5, unit: "MINUTES") {
+                    // Create the source directory and any missing parent directories
+                    sh "mkdir -p ${CB_SERVER_SOURCE}"
 
-                // Initialize and sync 'backup' group using 'repo'
-                dir("${CB_SERVER_SOURCE}") {
-                    sh "repo init -u https://github.com/couchbase/manifest -m ${CB_SERVER_MANIFEST} -g ${CB_SERVER_MANIFEST_GROUPS}"
-                    sh "repo sync --jobs=${env.PARALLELISM}"
+                    // Initialize and sync 'backup' group using 'repo'
+                    dir("${CB_SERVER_SOURCE}") {
+                        sh "repo init -u https://github.com/couchbase/manifest -m ${CB_SERVER_MANIFEST} -g ${CB_SERVER_MANIFEST_GROUPS}"
+                        sh "repo sync --jobs=${env.PARALLELISM}"
+                    }
                 }
             }
         }
 
         stage("Checkout") {
-            // Fetch the commit we are testing
-            dir("${CB_SERVER_SOURCE_PROJECT}") {
-                sh "git fetch ssh://buildbot@review.couchbase.org:29418/${GERRIT_PROJECT} ${GERRIT_REFSPEC}"
-                sh "git checkout FETCH_HEAD"
+            steps {
+                // Fetch the commit we are testing
+                dir("${CB_SERVER_SOURCE_PROJECT}") {
+                    sh "git fetch ssh://buildbot@review.couchbase.org:29418/${GERRIT_PROJECT} ${GERRIT_REFSPEC}"
+                    sh "git checkout FETCH_HEAD"
+                }
             }
         }
 
