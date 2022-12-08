@@ -146,6 +146,7 @@ pipeline {
         stage("Clone") {
             when {
                 expression {
+                    // Only run this step for 'tools-common', it has a slightly lighter weight build process.
                     return env.GERRIT_PROJECT == 'tools-common';
                 }
             }
@@ -163,6 +164,8 @@ pipeline {
         stage("Clone") {
             when {
                 expression {
+                    // All projects except 'tools-common' use 'repo' to clone them so ensure this step doesn't execute
+                    // for 'tools-common' as it has it's own clone step.
                     return env.GERRIT_PROJECT != 'tools-common';
                 }
             }
