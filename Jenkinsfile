@@ -20,6 +20,7 @@ PARALLELISM = 16
 
 GO_VERSION = "1.19"
 CB_SERVER_MANIFEST = "branch-master.xml"
+CB_SERVER_MANIFEST_GROUPS = "backup"
 
 WINDOWS_NODE_LABEL = "msvc2017"
 LINUX_NODE_LABEL = "ubuntu-18.04 && large"
@@ -176,7 +177,7 @@ pipeline {
 
                 // Initialize and sync 'backup' group using 'repo'
                 dir("${CB_SERVER_SOURCE}") {
-                    sh "repo init -u https://github.com/couchbase/manifest -m ${CB_SERVER_MANIFEST} -g backup"
+                    sh "repo init -u https://github.com/couchbase/manifest -m ${CB_SERVER_MANIFEST} -g ${CB_SERVER_MANIFEST_GROUPS}"
                     sh "repo sync --jobs=8"
                 }
             }
