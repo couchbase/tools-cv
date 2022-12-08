@@ -33,10 +33,10 @@ pipeline {
     agent { label getNodeLabel() }
 
     environment {
+        EXAMINADOR = "${WORKSPACE}/examinador"
+
         CB_SERVER_SOURCE = "${WORKSPACE}/server"
         CB_SERVER_SOURCE_PROJECT = "${CB_SERVER_SOURCE}/${GERRIT_PROJECT}"
-
-        EXAMINADOR = "${WORKSPACE}/examinador"
 
         GO_TARBALL_URL = "https://golang.org/dl/go1.19.linux-amd64.tar.gz"
         GOLANGCI_LINT_VERSION = "v1.49.0"
