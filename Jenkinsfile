@@ -178,7 +178,7 @@ pipeline {
                 // Initialize and sync 'backup' group using 'repo'
                 dir("${CB_SERVER_SOURCE}") {
                     sh "repo init -u https://github.com/couchbase/manifest -m ${CB_SERVER_MANIFEST} -g ${CB_SERVER_MANIFEST_GROUPS}"
-                    sh "repo sync --jobs=8"
+                    sh "repo sync --jobs=${env.PARALLELISM}"
                 }
             }
         }
