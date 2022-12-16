@@ -10,6 +10,8 @@
  * review will not have any effect until they are submitted.
  */
 
+ @Library('cvutils')
+
 import hudson.model.Result
 import hudson.model.Run
 import jenkins.model.CauseOfInterruption.UserInterruption
@@ -31,7 +33,7 @@ CMAKE_ARGS = "-DBUILD_ENTERPRISE=1"
 RUN_EXAMINADOR = false
 
 pipeline {
-    agent { label getNodeLabel() }
+    agent { label cvutils.getNodeLabel() }
 
     environment {
         EXAMINADOR = "${WORKSPACE}/examinador"
@@ -39,7 +41,6 @@ pipeline {
         CB_SERVER_SOURCE = "${WORKSPACE}/server"
         CB_SERVER_SOURCE_PROJECT = "${CB_SERVER_SOURCE}/${GERRIT_PROJECT}"
 
-        GO_TARBALL_URL = "https://golang.org/dl/go1.19.linux-amd64.tar.gz"
         GOLANGCI_LINT_VERSION = "v1.49.0"
 
         GOROOT = "${WORKSPACE}/go"
@@ -52,57 +53,13 @@ pipeline {
         stage("Setup") {
             steps {
                 script {
-                    sh 'printenv'
-                    silentJob = false
-                    if (getJobType() == "macos") {
-                        silentJob = true
-                    }
-                    echo "JobName:${getJobName()} JobType:${getJobType()} silentJob:${silentJob}"
-                    // Configure Gerrit Trigger
-                    properties([pipelineTriggers([
-                        gerrit(
-                            serverName: "review.couchbase.org",
-                            silentMode: silentJob,
-                            silentStartMode: silentJob,
-                            gerritProjects: [
-                                [
-                                    compareType: "PLAIN",
-                                    disableStrictForbiddenFileVerification: false, 
-                                    pattern: getProjectName(),
-                                    branches: [[ 
-                                        compareType: "PLAIN", 
-                                        pattern: env.BRANCH_NAME 
-                                    ]]
-                                ],
-                            ],
-                            triggerOnEvents: [
-                                commentAddedContains(commentAddedCommentContains: "reverify"),
-                                draftPublished(),
-                                patchsetCreated(excludeNoCodeChange: true)
-                            ]
-                        )
-                    ])])
-                }
-
-                script {
-                    // Ensure we have the relevant gerrit envars
-                    requiredEnvVars = ['GERRIT_HOST',
-                                       'GERRIT_PORT',
-                                       'GERRIT_PROJECT',
-                                       'GERRIT_PATCHSET_REVISION',
-                                       'GERRIT_REFSPEC',
-                                       'GERRIT_CHANGE_ID']
-
-                    for (var in requiredEnvVars) {
-                        if (!env.getProperty(var)){
-                            error "Required environment variable '${var}' not set."
-                        }
-                    }
+                    cvutils.configGerritTrigger()
+                    cvutils.checkRequiredEnvars()
 
                     // default CMAKE_ARGS to an empty string if unset
                     env.CMAKE_ARGS = env.CMAKE_ARGS ?: ""
 
-                    if (getJobName() != "windows") {
+                    if (cvutils.getJobName() != "windows") {
                         env.CMAKE_ARGS="-DCMAKE_BUILD_TYPE=DebugOptimized ${CMAKE_ARGS}"
                     }
 
@@ -125,8 +82,9 @@ pipeline {
         stage("Install Go") {
             steps {
                 timeout(time: 5, unit: "MINUTES") {
-                    // Install Golang locally
-                    sh "curl -sSL ${getGoDowloadURL()} | tar xz"
+                    script {
+                        cvutils.installGo(GO_VERSION)
+                    }
                 }
             }
         }
@@ -134,16 +92,9 @@ pipeline {
         stage("Install CV Dependencies") {
             steps {
                 timeout(time: 5, unit: "MINUTES") {
-                    // get golangci-lint binary
-                    sh "curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh | sh -s -- -b ${TEMP_GOBIN} ${GOLANGCI_LINT_VERSION}"
-                    sh "golangci-lint --version"
-
-                    // Unit test reporting
-                    sh "GOBIN=${TEMP_GOBIN} go install github.com/jstemmer/go-junit-report@latest"
-
-                    // Coverage reporting
-                    sh "GOBIN=${TEMP_GOBIN} go install github.com/axw/gocov/gocov@latest"
-                    sh "GOBIN=${TEMP_GOBIN} go install github.com/AlekSi/gocov-xml@latest"
+                    script {
+                        cvutils.installGoDeps(TEMP_GOBIN, GOLANGCI_LINT_VERSION)
+                    }
                 }
             }
         }
@@ -183,8 +134,9 @@ pipeline {
 
                     // Initialize and sync 'backup' group using 'repo'
                     dir("${CB_SERVER_SOURCE}") {
-                        sh "repo init -u https://github.com/couchbase/manifest -m ${CB_SERVER_MANIFEST} -g ${CB_SERVER_MANIFEST_GROUPS}"
-                        sh "repo sync --jobs=${env.PARALLELISM}"
+                        script {
+                            cvutils.repo(CB_SERVER_MANIFEST, CB_SERVER_MANIFEST_GROUPS, PARALLELISM)
+                        }
                     }
                 }
             }
@@ -194,8 +146,9 @@ pipeline {
             steps {
                 // Fetch the commit we are testing
                 dir("${CB_SERVER_SOURCE_PROJECT}") {
-                    sh "git fetch ssh://buildbot@review.couchbase.org:29418/${GERRIT_PROJECT} ${GERRIT_REFSPEC}"
-                    sh "git checkout FETCH_HEAD"
+                    script {
+                        cvutils.checkOutPatch()
+                    }
                 }
             }
         }
@@ -205,7 +158,9 @@ pipeline {
             steps {
                 timeout(time: 5, unit: "MINUTES") {
                     dir("${CB_SERVER_SOURCE_PROJECT}") {
-                        sh "GOBIN=${TEMP_GOBIN} golangci-lint run --timeout 5m"
+                        script {
+                            cvutils.runLint()
+                        }
                     }
                 }
                 script {
@@ -262,27 +217,8 @@ pipeline {
 
         stage("Test") {
             steps {
-                // Create somewhere to store our coverage/test reports
-                sh "mkdir -p reports"
-
-                dir("${CB_SERVER_SOURCE_PROJECT}") {
-                    // Clean the Go test cache
-                    sh "GOBIN=${TEMP_GOBIN} go clean -testcache"
-
-                    script {
-                        extraArgs = ""
-                        if (env.GERRIT_PROJECT == "cbmultimanager") {
-                            extraArgs = "-tags noui"
-                        }
-                        // Run the unit testing
-                        sh "2>&1 GOBIN=${TEMP_GOBIN} go test -v -timeout=15m -count=1 ${extraArgs} -coverprofile=coverage.out ./... | tee ${WORKSPACE}/reports/test.raw"
-                    }
-
-                    // Convert the test output into valid 'junit' xml
-                    sh "cat ${WORKSPACE}/reports/test.raw | go-junit-report > ${WORKSPACE}/reports/test.xml"
-
-                    // Convert the coverage report into valid 'cobertura' xml
-                    sh "GOBIN=${TEMP_GOBIN} gocov convert coverage.out | gocov-xml > ${WORKSPACE}/reports/coverage.xml"
+                script {
+                    cvutils.runGoTests(TEMP_GOBIN, CB_SERVER_SOURCE_PROJECT, "-tags noui")
                 }
             }
         }
@@ -312,8 +248,9 @@ pipeline {
             steps {
                 timeout(time: 15, unit: "MINUTES") {
                     dir("${CB_SERVER_SOURCE}") {
-                        sh "repo init -u https://github.com/couchbase/manifest -m ${CB_SERVER_MANIFEST} -g all"
-                        sh "repo sync -j${PARALLELISM}"
+                        script {
+                            cvutils.repo(CB_SERVER_MANIFEST, "all", PARALLELISM)
+                        }
                     }
 
                     // Fetch the commit we are testing
@@ -321,8 +258,7 @@ pipeline {
                         // if no gerrit spec given run on the current head
                         script {
                             if (env.GERRIT_REFSPEC) {
-                                sh "git fetch ssh://buildbot@review.couchbase.org:29418/${GERRIT_PROJECT} ${GERRIT_REFSPEC}"
-                                sh "git checkout FETCH_HEAD"
+                                cvutils.checkOutPatch()
                             }
                         }
                     }
@@ -408,13 +344,9 @@ pipeline {
 
     post {
         always {
-            // Post the test results
-            junit allowEmptyResults: true, testResults: "reports/test.xml"
-
-            // Post the test coverage
-            cobertura autoUpdateStability: false, autoUpdateHealth: false, onlyStable: false, coberturaReportFile: "reports/coverage.xml", conditionalCoverageTargets: "70, 10, 30", failNoReports: false, failUnhealthy: true, failUnstable: true, lineCoverageTargets: "70, 10, 30", methodCoverageTargets: "70, 10, 30", maxNumberOfBuilds: 0, sourceEncoding: "ASCII", zoomCoverageChart: false
-
             script {
+                cvutils.postTestResults()
+                cvutils.postCoverage()
                 if (env.RUN_EXAMINADOR && env.GERRIT_PROJECT == 'backup') {
                     step(
                             [
@@ -434,96 +366,9 @@ pipeline {
         }
 
         cleanup {
-            // We don't need the build cache interfering with any subsequent builds
-            sh "go clean --cache --testcache"
-
-            // Remove the workspace
-            deleteDir()
+            script {
+                cvutils.cleanUp()
+            }
         }
     }
-}
-
-/**
- * Taken from:
- * https://github.com/couchbase/server-cv/blob/a345959cfa6546819b4c03520d0d016bc16c4370/jenkins-jobs/Jenkinsfile
- *
- * Report vote to Gerrit verify-status plugin.
- *
- * Adds the job result to the verify-status sidebar in the Gerrit patch
- * view. This is hacky - the Jenkins plugin that does this for normal jobs
- * does not appear to have been updated to be used from Pipelines.
- * If a way of using the proper plugin is found, or it is updated, it should
- * definitely replace this.
- */
-def submitGerritVerifyStatus(value) {
-    if (env.GERRIT_PATCHSET_REVISION == null) {
-        return
-    }
-    // Directly report the verify status to Gerrit
-    // The jenkins plugin which reports to the verify-status sidebar does not seem to be up to date
-    // TODO: Investigate the HTTP API for greater portability (e.g., windows!)
-    def url = "http://cv.jenkins.couchbase.com/job/${getJobName()}/job/${env.BRANCH_NAME}/${BUILD_NUMBER}/"
-
-    sh """ssh -p ${env.GERRIT_PORT} buildbot@${env.GERRIT_HOST} \
-    -o "UserKnownHostsFile=/dev/null" -o "StrictHostKeyChecking=no" \
-    verify-status save --verification \
-    "'name=backup-cv-multi-branch-pipeline|value=${value}|url=${url}|reporter=buildbot'" \
-    ${GERRIT_PATCHSET_REVISION}"""
-}
-
-def getJobType() {
-    // e.g., tools.linux.some_testing_change/master
-    // we want linux
-    return getJobName().tokenize(".")[1]
-}
-
-def getJobName() {
-    // e.g., tools.linux.some_testing_change/master
-    // we want tools.linux.some_testing_change
-    return env.JOB_NAME.tokenize("/")[0]
-}
-
-def getProjectName() {
-    // e.g., tools.linux.some_testing_change/master
-    // we want tools
-    return getJobName().tokenize(".")[0]
-}
-
-def getNodeLabel() {
-    def osLabel = ""
-    switch(getJobType()) {
-        case "windows":
-            osLabel = WINDOWS_NODE_LABEL
-            break;
-        case "macos":
-            osLabel = MACOS_NODE_LABEL
-            break;
-        case ~/aarch64-linux.*/:
-            osLabel = "aarch64 && amzn2"
-            break;
-        default:
-            osLabel = LINUX_NODE_LABEL
-            break;
-    }
-    return "${osLabel} && ${env.BRANCH_NAME}"
-}
-
-def getGoDowloadURL() {
-    def url = "https://golang.org/dl/go${GO_VERSION}"
-    def goPlatform = ""
-    switch(getJobType()) {
-        case "windows":
-            osLabel = "windows-amd64.zip"
-            break;
-        case "macos":
-            goPlatform = "darwin-amd64.tar.gz"
-            break;
-        case ~/aarch64-linux.*/:
-            goPlatform = "linux-arm64.tar.gz"
-            break;
-        default:
-            goPlatform = "linux-amd64.tar.gz"
-            break;
-    }
-    return "${url}.${goPlatform}"
 }

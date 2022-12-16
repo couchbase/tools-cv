@@ -142,7 +142,7 @@ pipeline {
         stage("Test") {
             steps {
                 script {
-                    cvutils.runGoTests(CBBS)
+                    cvutils.runGoTests(GOBIN, CBBS, "")
                 }
             }
         }

@@ -174,21 +174,22 @@ def runLint() {
     sh "golangci-lint run --timeout 5m"
 }
 
-def runGoTests(source) {
-  // Clean the Go test cache
-  sh "go clean -testcache"
-
+def runGoTests(goBin, source, extraArgs) {
   // Create somewhere to store our coverage/test reports
   sh "mkdir -p reports"
+
   dir("${source}") {
+    // Clean the Go test cache
+    sh "GOBIN=${goBin} go clean -testcache"
+
     // Run the unit testing
-    sh "2>&1 go test -v -timeout=15m -count=1 -coverprofile=coverage-cbbs.out ./... | tee ${WORKSPACE}/reports/test-cbbs.raw"
+    sh "2>&1 GOBIN=${goBin} go test -v -timeout=15m -count=1 ${extraArgs} -coverprofile=coverage.out ./... | tee ${WORKSPACE}/reports/test.raw"
 
     // Convert the test output into valid 'junit' xml
-    sh "cat ${WORKSPACE}/reports/test-cbbs.raw | go-junit-report > ${WORKSPACE}/reports/test-cbbs.xml"
+    sh "cat ${WORKSPACE}/reports/test.raw | go-junit-report > ${WORKSPACE}/reports/test.xml"
 
     // Convert the coverage report into valid 'cobertura' xml
-    sh "gocov convert coverage-cbbs.out | gocov-xml > ${WORKSPACE}/reports/coverage-cbbs.xml"
+    sh "GOBIN=${goBin} gocov convert coverage.out | gocov-xml > ${WORKSPACE}/reports/coverage.xml"
   }
 }
 
@@ -219,12 +220,12 @@ def cleanUp() {
 
 def postTestResults() {
     // Post the test results
-    junit allowEmptyResults: true, testResults: "reports/test-*.xml"
+    junit allowEmptyResults: true, testResults: "reports/test*.xml"
 }
 
 def postCoverage() {
     // Post the test coverage
-    cobertura autoUpdateStability: false, autoUpdateHealth: false, onlyStable: false, coberturaReportFile: "reports/coverage-*.xml", conditionalCoverageTargets: "70, 10, 30", failNoReports: false, failUnhealthy: true, failUnstable: true, lineCoverageTargets: "70, 10, 30", methodCoverageTargets: "70, 10, 30", maxNumberOfBuilds: 0, sourceEncoding: "ASCII", zoomCoverageChart: false
+    cobertura autoUpdateStability: false, autoUpdateHealth: false, onlyStable: false, coberturaReportFile: "reports/coverage*.xml", conditionalCoverageTargets: "70, 10, 30", failNoReports: false, failUnhealthy: true, failUnstable: true, lineCoverageTargets: "70, 10, 30", methodCoverageTargets: "70, 10, 30", maxNumberOfBuilds: 0, sourceEncoding: "ASCII", zoomCoverageChart: false
 }
 
 return this
