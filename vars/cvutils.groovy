@@ -67,7 +67,9 @@ def configGerritTrigger() {
                     branches: [
                         [
                             compareType: "PLAIN",
-                            pattern: env.BRANCH_NAME
+                            // disable pipeline for now
+                            // pattern: env.BRANCH_NAME 
+                            pattern: "disabled"
                         ]
                     ]
                 ],
